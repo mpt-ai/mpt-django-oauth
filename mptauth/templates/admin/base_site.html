@@ -1,0 +1,14 @@
+{% extends "admin/base.html" %}
+{% load i18n %}
+{% load static %}
+
+{% block title %}{{ site_title }}{% endblock %}
+{% block extrastyle %}
+    <link rel="stylesheet" type="text/css" href="{% static "css/admin_color.css" %}"/>
+{% endblock %}
+
+{% block branding %}
+    <h1 id="site-name">{% trans site_header %}</h1>
+{% endblock %}
+
+{% block nav-global %}{% endblock %}

@@ -1,0 +1,66 @@
+{% extends "admin/base_site.html" %}
+{% load i18n static %}
+
+{% block extrastyle %}{{ block.super }}<link rel="stylesheet" href="{% static "admin/css/login.css" %}">
+{{ form.media }}
+{% endblock %}
+
+{% block bodyclass %}{{ block.super }} login{% endblock %}
+
+{% block usertools %}{% endblock %}
+
+{% block nav-global %}{% endblock %}
+
+{% block nav-sidebar %}{% endblock %}
+
+{% block content_title %}{% endblock %}
+
+{% block nav-breadcrumbs %}{% endblock %}
+
+{% block content %}
+{% if form.errors and not form.non_field_errors %}
+<p class="errornote">
+{% blocktranslate count counter=form.errors.items|length %}Please correct the error below.{% plural %}Please correct the errors below.{% endblocktranslate %}
+</p>
+{% endif %}
+
+{% if form.non_field_errors %}
+{% for error in form.non_field_errors %}
+<p class="errornote">
+    {{ error }}
+</p>
+{% endfor %}
+{% endif %}
+
+<div id="content-main">
+
+{% if user.is_authenticated %}
+<p class="errornote">
+{% blocktranslate trimmed %}
+    You are authenticated as {{ username }}, but are not authorized to
+    access this page. Would you like to login to a different account?
+{% endblocktranslate %}
+</p>
+{% endif %}
+
+<div>
+  {% if user.is_authenticated %}
+    <div class="submit-row">
+      <p style="text-align: center;">
+        Switch Account
+        <a href="{% url "mptauth:logout" %}?callback={{ request.scheme }}://{{ request.get_host }}{% url 'admin:index' %}">Logout</a>
+      </p>
+    </div>
+  {% else %}
+    <div class="submit-row">  
+      <a 
+        class="submit-row" 
+        style="text-align: center;"
+        href="{% url 'social:begin' 'mptauth' %}?next={{ request.scheme }}://{{ request.get_host }}{% url 'admin:index' %}"
+      >
+        <input type="submit" value="Login with Oauth2">
+      </a>
+    </div>
+  {% endif %}
+</div>
+{% endblock %}
