@@ -1,5 +1,16 @@
+import os
+import requests
+from io import BytesIO
+
 from django.db import models
-from django.contrib.auth.models import User, AnonymousUser
+from django.conf import settings
+from django.contrib.auth.models import User
+from django.contrib.auth.signals import user_logged_in
+from django.core.files.images import ImageFile
+
+# Using getattr with a default is cleaner
+SSL_VERIFY = getattr(settings, 'SOCIAL_AUTH_VERIFY_SSL', False)
+
 
 class Account(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE)
@@ -7,74 +18,12 @@ class Account(models.Model):
     last_name = models.CharField(max_length=300)
     email = models.EmailField()
     image = models.ImageField(upload_to='mptauth-image', blank=True, null=True)
-    role = models.JSONField()
-    permission = models.JSONField()
+    role = models.JSONField(default=list) 
+    permission = models.JSONField(default=list)
     
     def __str__(self) -> str:
-        return f"{self.user.username}"
+        return self.user.username
 
-import os
-import requests
-from django.conf import settings
-from django.contrib.auth.signals import user_logged_in
-from io import BytesIO
-from django.core.files.images import ImageFile
-
-SSL_VERIFY = False
-if hasattr(settings, 'SOCIAL_AUTH_VERIFY_SSL'):
-    SSL_VERIFY = settings.SOCIAL_AUTH_VERIFY_SSL
-
-def logged_in_handle(sender, user, request, **kwargs):
-    if settings.DEBUG: print("logged_in_handle")
-    prov = user.social_auth.filter(provider='mptauth')
-    user_data = {
-        'user': user,
-        'first_name': user.first_name,
-        'last_name': user.last_name,
-        'email': user.email,
-        'role': [],
-        'permission': []
-    }
-    if prov.exists():
-        data = prov.last().extra_data
-        headers = {
-            "Authorization": f"Bearer {data.get('access_token', '')}"
-        }
-        _internal_ip = getattr(settings, 'OAUTH_INTERNAL_IP', None)
-        _url = f"http://{_internal_ip}" if _internal_ip not in [None, "", " "] else  f"https://{settings.OAUTH_MPT_SERVER_BASEURL}"
-        try:
-            api = requests.get(f"{_url}/api/v1/account/me/", headers=headers, verify=SSL_VERIFY).json()
-        except Exception as e:
-            if settings.DEBUG: print(f"logged_in_handle: {e}")
-            pass
-        else:
-            accounts = Account.objects.filter(user=request.user) | Account.objects.filter(user__username=api.get('username', ''))
-            image = ImageFile(BytesIO(requests.get(api.get('profile_url')).content), name=f"{user.username}.png") if api.get('profile_url', "") != "" else None
-            if image: user_data.update({'image': image})
-            user_data.update({
-                'role': api.get('role', []),
-                'permission': api.get('permission', [])
-            })
-            user = request.user
-            user.is_staff = api.get('is_staff', False)
-            user.is_superuser = api.get('is_superuser', False)
-            user.save()
-            if not accounts.exists():
-                Account.objects.create(**user_data)
-            else:
-                account = accounts.last()
-                try:
-                    image_path = getattr(account.image, 'path')
-                except Exception:
-                    image_path = '_dummpy-image'
-                if image != None and os.path.exists(image_path):
-                    os.remove(account.image.path)
-                [setattr(account, k, v) for k,v in user_data.items()]
-                account.save()
-    elif type(request.user) != AnonymousUser and Account.objects.filter(user__username=user.username).exists() == False:
-        Account.objects.create(**user_data)
-        
-user_logged_in.connect(logged_in_handle)
 
 class AccessLog(models.Model):
     actor = models.CharField(max_length=255)
@@ -84,3 +33,77 @@ class AccessLog(models.Model):
     origin = models.TextField()
     response_time = models.FloatField()
     timestamp = models.DateTimeField(auto_now_add=True)
+
+
+def logged_in_handle(sender, user, request, **kwargs):
+    if settings.DEBUG: 
+        print("logged_in_handle triggered")
+        
+    if not user.is_authenticated:
+        return
+
+    # 1. Base user data
+    user_data = {
+        'first_name': user.first_name,
+        'last_name': user.last_name,
+        'email': user.email,
+        'role': [],
+        'permission': []
+    }
+
+    # 2. Check for social auth provider using .last() directly
+    prov = user.social_auth.filter(provider='mptauth').last()
+
+    if prov:
+        data = prov.extra_data
+        headers = {"Authorization": f"Bearer {data.get('access_token', '')}"}
+        
+        _internal_ip = getattr(settings, 'OAUTH_INTERNAL_IP', None)
+        _url = f"http://{_internal_ip}" if _internal_ip and _internal_ip.strip() else f"https://{settings.OAUTH_MPT_SERVER_BASEURL}"
+        
+        try:
+            # Add a timeout! A hanging external API shouldn't crash the login process.
+            response = requests.get(f"{_url}/api/v1/account/me/", headers=headers, verify=SSL_VERIFY, timeout=5)
+            response.raise_for_status() # Raises an error for bad HTTP responses (4xx, 5xx)
+            api = response.json()
+        except (requests.RequestException, ValueError) as e:
+            if settings.DEBUG: 
+                print(f"logged_in_handle API error: {e}")
+            api = None
+
+        if api:
+            profile_url = api.get('profile_url')
+            
+            # Fetch image safely with its own timeout
+            if profile_url:
+                try:
+                    img_resp = requests.get(profile_url, timeout=5)
+                    if img_resp.status_code == 200:
+                        user_data['image'] = ImageFile(BytesIO(img_resp.content), name=f"{user.username}.png")
+                except requests.RequestException as e:
+                    if settings.DEBUG: 
+                        print(f"logged_in_handle image fetch error: {e}")
+
+            # Update role/permission defaults
+            user_data['role'] = api.get('role', [])
+            user_data['permission'] = api.get('permission', [])
+            
+            # Update and save the core User model efficiently
+            user.is_staff = api.get('is_staff', False)
+            user.is_superuser = api.get('is_superuser', False)
+            user.save(update_fields=['is_staff', 'is_superuser'])
+
+    # 3. Create or Update the Account model
+    account, created = Account.objects.get_or_create(user=user, defaults=user_data)
+    
+    if not created:
+        # If updating, properly delete the old image using Django's Storage API
+        if 'image' in user_data and user_data['image'] and account.image:
+            account.image.storage.delete(account.image.name)
+            
+        # Update attributes cleanly (avoids the list comprehension side-effect anti-pattern)
+        for k, v in user_data.items():
+            setattr(account, k, v)
+        account.save()
+
+user_logged_in.connect(logged_in_handle)
