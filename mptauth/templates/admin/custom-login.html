@@ -52,14 +52,12 @@
       </p>
     </div>
   {% else %}
-    <div class="submit-row">  
-      <a 
-        class="submit-row" 
-        style="text-align: center;"
-        href="{% url 'social:begin' 'mptauth' %}?next={{ request.scheme }}://{{ request.get_host }}{% url 'admin:index' %}"
-      >
-        <input type="submit" value="Login with MPT">
-      </a>
+    <div class="submit-row">
+      <form method="post" action="{% url 'social:begin' 'mptauth' %}">
+        {% csrf_token %}
+        <input type="hidden" name="next" value="{{ request.scheme }}://{{ request.get_host }}{% url 'admin:index' %}">
+        <input type="submit" value="Login with MPT" style="width: 100%; text-align: center;">
+      </form>
     </div>
   {% endif %}
 </div>

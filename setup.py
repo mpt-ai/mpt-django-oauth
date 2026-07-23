@@ -43,8 +43,8 @@ setup(
         'Topic :: Internet :: WWW/HTTP :: Dynamic Content',
     ],
     install_requires=[
-       'social-auth-app-django',
-       'djangorestframework-simplejwt',
-       'Pillow'
+       'social-auth-app-django==6.0.0',
+       'djangorestframework-simplejwt==5.5.1',
+       'Pillow==12.3.0'
     ]
 )
